@@ -48,6 +48,17 @@ export const MIME_TYPES: Record<string, string> = {
   pdf: 'application/pdf',
   txt: 'text/plain',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  mkv: 'video/x-matroska',
+  avi: 'video/x-msvideo',
+  mp3: 'audio/mpeg',
+  wav: 'audio/wav',
+  srt: 'text/plain',
+  vtt: 'text/vtt',
+  ass: 'text/plain',
+  subtitles: 'text/plain',
 };
 
 export const TARGET_FORMATS_BY_SOURCE: Record<string, SupportedTargetFormat[]> = {
@@ -56,12 +67,17 @@ export const TARGET_FORMATS_BY_SOURCE: Record<string, SupportedTargetFormat[]> =
   jpeg: ['png', 'webp', 'pdf', 'svg'],
   webp: ['png', 'jpg', 'pdf', 'svg'],
   svg: ['png', 'jpg', 'webp', 'pdf'],
-  gif: ['png', 'jpg', 'webp', 'pdf'],
+  gif: ['mp4', 'webm', 'png', 'jpg', 'webp'],
   bmp: ['png', 'jpg', 'webp', 'pdf'],
+  mp4: ['webm', 'gif', 'mp4', 'mp3', 'wav', 'subtitles', 'srt', 'vtt'],
+  webm: ['mp4', 'gif', 'webm', 'mp3', 'wav', 'subtitles', 'srt', 'vtt'],
+  mov: ['mp4', 'webm', 'gif', 'mp3', 'wav'],
+  mkv: ['subtitles', 'srt', 'vtt', 'ass', 'mp4', 'webm', 'gif', 'mp3', 'wav'],
+  avi: ['mp4', 'webm', 'gif', 'mp3', 'wav'],
   pdf: ['png', 'jpg', 'webp', 'txt'],
   docx: ['pdf', 'txt'],
   txt: ['pdf'],
-  any: ['png', 'jpg', 'webp', 'pdf', 'svg', 'txt'],
+  any: ['subtitles', 'srt', 'vtt', 'mp4', 'webm', 'png', 'jpg', 'webp', 'pdf', 'svg', 'gif'],
 };
 
 export function getBaseName(fileName: string): string {

@@ -6,6 +6,8 @@ import { SvgStudio } from './components/SvgStudio';
 import { DropZone } from './components/DropZone';
 import { BatchList } from './components/BatchList';
 import { CropModal } from './components/CropModal';
+import { VideoSettingsModal } from './components/VideoSettingsModal';
+import { SubtitleModal } from './components/SubtitleModal';
 import { ConversionSettings } from './components/ConversionSettings';
 import {
   SupportedSourceFormat,
@@ -13,6 +15,7 @@ import {
   FileItem,
   CropArea,
   ConvertedOutput,
+  VideoConversionOptions,
 } from './types/converter';
 import {
   TARGET_FORMATS_BY_SOURCE,
@@ -23,9 +26,20 @@ import {
   mergeImagesToPdf,
   createZipBundle,
 } from './utils/fileConversion';
-import { ShieldCheck, Zap, Sparkles } from 'lucide-react';
+import { convertAndCompressVideo } from './utils/videoProcessor';
+import {
+  extractSubtitlesFromMkv,
+  buildSrtString,
+  buildVttString,
+  buildAssString,
+  getTrackNativeFormat,
+  getSubtitleFileName,
+  MkvSubtitleTrack,
+} from './utils/mkvSubtitleExtractor';
+import { ShieldCheck, Zap } from 'lucide-react';
 
 const RASTER_FORMATS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
+const VIDEO_FORMATS = ['mp4', 'webm', 'mov', 'mkv', 'avi', '3gp'];
 
 export default function App() {
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
@@ -47,8 +61,14 @@ export default function App() {
   const [maxDimension, setMaxDimension] = useState<number | undefined>(undefined);
   const [mergeToPdf, setMergeToPdf] = useState(false);
 
-  // Cropper state
+  // Modals state
   const [cropTargetItem, setCropTargetItem] = useState<FileItem | null>(null);
+  const [videoSettingsTargetItem, setVideoSettingsTargetItem] = useState<FileItem | null>(null);
+  const [subtitleTargetItem, setSubtitleTargetItem] = useState<{
+    file: File;
+    name: string;
+    tracks: MkvSubtitleTrack[];
+  } | null>(null);
   const [isWindowDragActive, setIsWindowDragActive] = useState(false);
 
   // Synchronize theme with HTML root class
@@ -98,6 +118,8 @@ export default function App() {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         setCropTargetItem(null);
+        setVideoSettingsTargetItem(null);
+        setSubtitleTargetItem(null);
       }
     };
 
@@ -142,7 +164,6 @@ export default function App() {
   // Swap formats handler
   const handleSwapFormats = () => {
     if (sourceFormat === 'any') {
-      // If ANY, set source to current target and pick a valid new target
       const newSource = targetFormat as SupportedSourceFormat;
       const validNewTargets = TARGET_FORMATS_BY_SOURCE[newSource] || ['png', 'jpg'];
       setSourceFormat(newSource);
@@ -153,7 +174,6 @@ export default function App() {
     const currentSource = sourceFormat;
     const currentTarget = targetFormat;
 
-    // Check if target format can be a valid source
     const newSource = currentTarget as SupportedSourceFormat;
     const validNewTargets = TARGET_FORMATS_BY_SOURCE[newSource] || [];
 
@@ -174,12 +194,14 @@ export default function App() {
     const firstExt = files[0].name.split('.').pop()?.toLowerCase() || '';
     const normalizedFirstExt = firstExt === 'jpeg' ? 'jpg' : firstExt;
 
-    // Auto update source selector if currently 'any' or matching single file upload
-    if (sourceFormat === 'any' && TARGET_FORMATS_BY_SOURCE[normalizedFirstExt]) {
+    // Auto switch source format whenever a file format is recognized (e.g. mkv -> png, png -> mkv)
+    let activeTarget = targetFormat;
+    if (TARGET_FORMATS_BY_SOURCE[normalizedFirstExt]) {
       setSourceFormat(normalizedFirstExt as SupportedSourceFormat);
       const validTargets = TARGET_FORMATS_BY_SOURCE[normalizedFirstExt] || ['png', 'jpg'];
-      if (!validTargets.includes(targetFormat)) {
-        setTargetFormat(validTargets[0]);
+      if (!validTargets.includes(targetFormat) || targetFormat === (normalizedFirstExt as any)) {
+        activeTarget = validTargets[0];
+        setTargetFormat(activeTarget);
       }
     }
 
@@ -188,8 +210,8 @@ export default function App() {
       if (ext === 'jpeg') ext = 'jpg';
 
       const validTargets = TARGET_FORMATS_BY_SOURCE[ext] || ['png', 'jpg', 'webp'];
-      const resolvedTarget = validTargets.includes(targetFormat)
-        ? targetFormat
+      const resolvedTarget = validTargets.includes(activeTarget) && activeTarget !== (ext as any)
+        ? activeTarget
         : validTargets[0];
 
       return {
@@ -221,6 +243,51 @@ export default function App() {
     setItems((prev) =>
       prev.map((it) => (it.id === cropTargetItem.id ? { ...it, crop } : it))
     );
+  };
+
+  const handleApplyVideoSettings = (options: VideoConversionOptions) => {
+    if (!videoSettingsTargetItem) return;
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === videoSettingsTargetItem.id
+          ? { ...it, videoOptions: options }
+          : it
+      )
+    );
+  };
+
+  const handleOpenSubtitles = async (item: FileItem) => {
+    if (!item.file) return;
+    setItems((prev) =>
+      prev.map((it) => (it.id === item.id ? { ...it, status: 'converting' } : it))
+    );
+    try {
+      const result = await extractSubtitlesFromMkv(item.file, (progress) => {
+        setItems((prev) =>
+          prev.map((it) => (it.id === item.id ? { ...it, progress } : it))
+        );
+      });
+      setItems((prev) =>
+        prev.map((it) => (it.id === item.id ? { ...it, status: 'idle', progress: undefined } : it))
+      );
+      setSubtitleTargetItem({
+        file: item.file,
+        name: item.name,
+        tracks: result.tracks,
+      });
+    } catch (err: unknown) {
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === item.id
+            ? {
+                ...it,
+                status: 'error',
+                errorMsg: err instanceof Error ? err.message : 'Failed to parse subtitles',
+              }
+            : it
+        )
+      );
+    }
   };
 
   // Convert all items in queue
@@ -315,6 +382,51 @@ export default function App() {
             { maxKb, maxDimension },
             item.crop
           );
+        } else if (['subtitles', 'srt', 'vtt', 'ass'].includes(item.targetExt)) {
+          // Extract subtitles directly from MKV container
+          const result = await extractSubtitlesFromMkv(file, (progress) => {
+            setItems((prev) =>
+              prev.map((it) => (it.id === item.id ? { ...it, progress } : it))
+            );
+          });
+          if (result.tracks.length === 0) {
+            throw new Error('No embedded subtitle tracks found in this MKV file');
+          }
+          outputs = result.tracks.map((trk, idx) => {
+            // If target format is 'subtitles' (Auto), detect native format: .ass if ASS, .vtt if VTT, .srt if SRT
+            const fmt: 'srt' | 'vtt' | 'ass' =
+              item.targetExt === 'subtitles'
+                ? getTrackNativeFormat(trk)
+                : (item.targetExt as 'srt' | 'vtt' | 'ass');
+
+            let content = '';
+            if (fmt === 'srt') content = buildSrtString(trk.cues);
+            else if (fmt === 'vtt') content = buildVttString(trk.cues, trk.name);
+            else content = buildAssString(trk.cues, trk.codecPrivate, trk.name);
+
+            const blob = new Blob([content], {
+              type: fmt === 'vtt' ? 'text/vtt' : 'text/plain;charset=utf-8',
+            });
+            const outName = getSubtitleFileName(item.name, trk, idx, result.tracks, fmt);
+            return {
+              blob,
+              name: outName,
+              url: URL.createObjectURL(blob),
+              size: blob.size,
+            };
+          });
+        } else if (VIDEO_FORMATS.includes(item.sourceExt)) {
+          const videoOut = await convertAndCompressVideo(
+            file,
+            item.targetExt,
+            item.videoOptions || { resolution: 'original', quality: 'medium', mute: false },
+            (progress) => {
+              setItems((prev) =>
+                prev.map((it) => (it.id === item.id ? { ...it, progress } : it))
+              );
+            }
+          );
+          outputs = [videoOut];
         } else if (item.sourceExt === 'svg') {
           const svgText = await file.text();
           outputs = await convertSvgCodeOrFile(
@@ -367,7 +479,7 @@ export default function App() {
         origin: { y: 0.8 },
       });
     } catch {
-      // ignore in tests
+      // ignore
     }
   };
 
@@ -417,7 +529,7 @@ export default function App() {
           <div className="text-center max-w-xl mx-auto mb-3">
             <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-50 dark:bg-rose-950/40 text-rose-600 dark:text-rose-400 border border-rose-200/80 dark:border-rose-900/50 text-xs font-bold mb-3 shadow-xs">
               <Zap className="w-3.5 h-3.5 fill-rose-500" />
-              <span>Lightning Fast Local Processing</span>
+              <span>100% Client-Side Browser Engine</span>
             </div>
 
             <h1 className="text-3xl sm:text-5xl font-black tracking-tight text-slate-900 dark:text-white leading-tight">
@@ -425,7 +537,7 @@ export default function App() {
             </h1>
 
             <p className="mt-2 text-sm sm:text-base text-slate-600 dark:text-slate-400">
-              Zero cloud uploads. Your images, SVGs, and documents are processed 100% inside your browser with maximum privacy and speed.
+              Zero cloud uploads. Fast offline conversion for images, SVGs, videos, and documents with instant download.
             </p>
           </div>
 
@@ -440,8 +552,7 @@ export default function App() {
           />
 
           {/* CONDITIONAL SVG STUDIO:
-              Show SVG Code Editor + 2x/4x scaling with estimated size only when SVG is selected as source!
-              Otherwise keep UI clean as requested! */}
+              Show SVG Code Editor + 2x/4x scaling with estimated size only when SVG is selected as source! */}
           {sourceFormat === 'svg' ? (
             <SvgStudio
               onAddFiles={handleAddFiles}
@@ -476,6 +587,8 @@ export default function App() {
             onUpdateTargetFormat={handleUpdateTargetFormat}
             onRemoveItem={handleRemoveItem}
             onOpenCrop={(item) => setCropTargetItem(item)}
+            onOpenVideoSettings={(item) => setVideoSettingsTargetItem(item)}
+            onOpenSubtitles={handleOpenSubtitles}
             onConvertAll={handleConvertAll}
             onDownloadAllZip={handleDownloadAllZip}
             onClearAll={() => setItems([])}
@@ -488,13 +601,13 @@ export default function App() {
           <div className="flex items-center gap-2">
             <span className="font-bold text-slate-700 dark:text-slate-300">FileConvert</span>
             <span>•</span>
-            <span>Client-side WebAssembly & HTML5 Canvas Engine</span>
+            <span>Client-side WebAssembly, Canvas & Media Engine</span>
           </div>
 
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400 font-medium">
               <ShieldCheck className="w-4 h-4" />
-              <span>Works completely offline</span>
+              <span>Works 100% offline</span>
             </div>
           </div>
         </footer>
@@ -508,6 +621,27 @@ export default function App() {
           currentCrop={cropTargetItem.crop}
           onApplyCrop={handleApplyCrop}
           onClose={() => setCropTargetItem(null)}
+        />
+      )}
+
+      {/* Video Compression & Settings Modal */}
+      {videoSettingsTargetItem && videoSettingsTargetItem.file && (
+        <VideoSettingsModal
+          isOpen={!!videoSettingsTargetItem}
+          file={videoSettingsTargetItem.file}
+          currentOptions={videoSettingsTargetItem.videoOptions}
+          onApply={handleApplyVideoSettings}
+          onClose={() => setVideoSettingsTargetItem(null)}
+        />
+      )}
+
+      {/* MKV Subtitles Extractor Modal */}
+      {subtitleTargetItem && (
+        <SubtitleModal
+          isOpen={!!subtitleTargetItem}
+          fileName={subtitleTargetItem.name}
+          tracks={subtitleTargetItem.tracks}
+          onClose={() => setSubtitleTargetItem(null)}
         />
       )}
 

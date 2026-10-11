@@ -8,6 +8,9 @@ import {
   File,
   Check,
   Sparkles,
+  Video,
+  Music,
+  Subtitles,
 } from 'lucide-react';
 import { SupportedSourceFormat, SupportedTargetFormat } from '../types/converter';
 import { TARGET_FORMATS_BY_SOURCE } from '../utils/fileConversion';
@@ -32,6 +35,16 @@ const SOURCE_FORMAT_GROUPS = [
     category: 'Vector Graphics',
     formats: [
       { id: 'svg', label: 'SVG', desc: 'Scalable Vector Graphics & Code', icon: FileCode },
+    ],
+  },
+  {
+    category: 'Video & Media',
+    formats: [
+      { id: 'mp4', label: 'MP4', desc: 'Universal video & audio', icon: Video },
+      { id: 'webm', label: 'WEBM', desc: 'WebM open video format', icon: Video },
+      { id: 'mov', label: 'MOV', desc: 'Apple QuickTime video', icon: Video },
+      { id: 'mkv', label: 'MKV', desc: 'Matroska container video', icon: Video },
+      { id: 'avi', label: 'AVI', desc: 'Audio Video Interleave', icon: Video },
     ],
   },
   {
@@ -62,6 +75,17 @@ const FORMAT_ICONS: Record<string, React.ElementType> = {
   webp: FileImage,
   gif: FileImage,
   bmp: FileImage,
+  mp4: Video,
+  webm: Video,
+  mov: Video,
+  mkv: Video,
+  avi: Video,
+  mp3: Music,
+  wav: Music,
+  subtitles: Subtitles,
+  srt: Subtitles,
+  vtt: Subtitles,
+  ass: Subtitles,
   pdf: FileText,
   docx: FileText,
   txt: File,
@@ -313,7 +337,14 @@ export const FormatSelectorPair: React.FC<FormatSelectorPairProps> = ({
                     >
                       <div className="flex items-center gap-2">
                         <Icon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                        <span className="font-bold uppercase text-sm">{fmt}</span>
+                        <span className="font-bold uppercase text-sm">
+                          {fmt === 'subtitles' ? 'AUTO SUB' : fmt}
+                        </span>
+                        {fmt === 'subtitles' && (
+                          <span className="text-[10px] text-rose-500 font-semibold lowercase">
+                            (embedded)
+                          </span>
+                        )}
                       </div>
                       {isSelected && <Check className="w-4 h-4 text-rose-500" />}
                     </button>

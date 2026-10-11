@@ -52,12 +52,6 @@ export const DropZone: React.FC<DropZoneProps> = ({
     }
   };
 
-  const getAcceptExtensions = (): string => {
-    if (sourceFormat === 'any') return '';
-    if (sourceFormat === 'jpg' || sourceFormat === 'jpeg') return '.jpg,.jpeg';
-    return `.${sourceFormat}`;
-  };
-
   return (
     <div
       onDragEnter={handleDragEnter}
@@ -71,11 +65,11 @@ export const DropZone: React.FC<DropZoneProps> = ({
           : 'border-slate-200 dark:border-slate-800 bg-white/70 dark:bg-slate-900/60 hover:border-rose-300 dark:hover:border-slate-700 hover:bg-slate-50/50 dark:hover:bg-slate-900 shadow-sm'
       }`}
     >
+      {/* Unrestricted file picker enables selecting any file, navigating system storage & hidden files freely */}
       <input
         ref={fileInputRef}
         type="file"
         multiple
-        accept={getAcceptExtensions()}
         onChange={handleFileChange}
         className="hidden"
       />
@@ -96,13 +90,13 @@ export const DropZone: React.FC<DropZoneProps> = ({
         </h3>
 
         <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 max-w-sm mt-1">
-          Supports batch conversion of images, vectors, PDFs, and documents directly in browser
+          Supports batch conversion of images, videos (MKV/MP4/WebM), subtitles extraction, vectors, PDFs, and documents directly in browser
         </p>
 
-        <div className="mt-5 flex flex-wrap items-center justify-center gap-2">
+        <div className="mt-5 flex flex-wrap items-center justify-center gap-2 pointer-events-auto">
           <button
             type="button"
-            className="px-5 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs sm:text-sm shadow-md shadow-rose-500/25 flex items-center gap-2 transition-all cursor-pointer pointer-events-auto active:scale-95"
+            className="px-5 py-2.5 rounded-xl bg-rose-500 hover:bg-rose-600 text-white font-bold text-xs sm:text-sm shadow-md shadow-rose-500/25 flex items-center gap-2 transition-all cursor-pointer active:scale-95"
             onClick={(e) => {
               e.stopPropagation();
               fileInputRef.current?.click();

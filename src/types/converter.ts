@@ -7,6 +7,11 @@ export type SupportedSourceFormat =
   | 'svg'
   | 'gif'
   | 'bmp'
+  | 'mp4'
+  | 'webm'
+  | 'mov'
+  | 'mkv'
+  | 'avi'
   | 'pdf'
   | 'docx'
   | 'txt';
@@ -18,7 +23,16 @@ export type SupportedTargetFormat =
   | 'svg'
   | 'pdf'
   | 'docx'
-  | 'txt';
+  | 'txt'
+  | 'mp4'
+  | 'webm'
+  | 'gif'
+  | 'mp3'
+  | 'wav'
+  | 'srt'
+  | 'vtt'
+  | 'ass'
+  | 'subtitles';
 
 export interface CropArea {
   x: number;
@@ -34,6 +48,15 @@ export interface ConvertedOutput {
   size: number;
 }
 
+export interface VideoConversionOptions {
+  resolution: 'original' | '1080p' | '720p' | '480p' | '360p';
+  quality: 'high' | 'medium' | 'low';
+  mute: boolean;
+  trimStart?: number;
+  trimEnd?: number;
+  gifFps?: number;
+}
+
 export interface FileItem {
   id: string;
   file?: File;
@@ -45,6 +68,7 @@ export interface FileItem {
   progress?: number;
   errorMsg?: string;
   crop?: CropArea | null;
+  videoOptions?: VideoConversionOptions;
   outputs?: ConvertedOutput[];
   previewUrl?: string;
 }

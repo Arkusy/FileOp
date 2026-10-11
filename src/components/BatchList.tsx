@@ -3,6 +3,7 @@ import {
   FileItem,
   SupportedTargetFormat,
   CropArea,
+  VideoConversionOptions,
 } from '../types/converter';
 import { formatBytes, TARGET_FORMATS_BY_SOURCE } from '../utils/fileConversion';
 import {
@@ -13,6 +14,8 @@ import {
   FileCheck,
   Archive,
   RefreshCw,
+  SlidersHorizontal,
+  Subtitles,
 } from 'lucide-react';
 
 interface BatchListProps {
@@ -20,6 +23,8 @@ interface BatchListProps {
   onUpdateTargetFormat: (id: string, format: SupportedTargetFormat) => void;
   onRemoveItem: (id: string) => void;
   onOpenCrop: (item: FileItem) => void;
+  onOpenVideoSettings?: (item: FileItem) => void;
+  onOpenSubtitles?: (item: FileItem) => void;
   onConvertAll: () => void;
   onDownloadAllZip: () => void;
   onClearAll: () => void;
@@ -27,12 +32,15 @@ interface BatchListProps {
 }
 
 const RASTER_FORMATS = ['png', 'jpg', 'jpeg', 'webp', 'gif', 'bmp'];
+const VIDEO_FORMATS = ['mp4', 'webm', 'mov', 'mkv', 'avi', '3gp'];
 
 export const BatchList: React.FC<BatchListProps> = ({
   items,
   onUpdateTargetFormat,
   onRemoveItem,
   onOpenCrop,
+  onOpenVideoSettings,
+  onOpenSubtitles,
   onConvertAll,
   onDownloadAllZip,
   onClearAll,
@@ -78,6 +86,7 @@ export const BatchList: React.FC<BatchListProps> = ({
             'pdf',
           ];
           const isImage = RASTER_FORMATS.includes(item.sourceExt);
+          const isVideo = VIDEO_FORMATS.includes(item.sourceExt);
 
           return (
             <div
@@ -105,6 +114,12 @@ export const BatchList: React.FC<BatchListProps> = ({
                       {item.crop && (
                         <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-300 shrink-0">
                           Cropped
+                        </span>
+                      )}
+                      {isVideo && item.videoOptions && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-300 shrink-0">
+                          {item.videoOptions.resolution} · {item.videoOptions.quality}
+                          {item.videoOptions.mute ? ' · Muted' : ''}
                         </span>
                       )}
                     </div>
@@ -139,11 +154,37 @@ export const BatchList: React.FC<BatchListProps> = ({
                     >
                       {validTargets.map((t) => (
                         <option key={t} value={t} className="dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                          {t}
+                          {t === 'subtitles' ? 'SUBTITLES (AUTO)' : t}
                         </option>
                       ))}
                     </select>
                   </div>
+
+                  {/* Subtitles extract button (if MKV or video with subtitles) */}
+                  {item.sourceExt === 'mkv' && item.file && onOpenSubtitles && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenSubtitles(item)}
+                      title="Extract embedded MKV subtitle tracks"
+                      className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer flex items-center gap-1 text-xs font-bold"
+                    >
+                      <Subtitles className="w-4 h-4 text-rose-500" />
+                      <span className="hidden sm:inline">Subtitles</span>
+                    </button>
+                  )}
+
+                  {/* Video options button (if video) */}
+                  {isVideo && item.file && onOpenVideoSettings && (
+                    <button
+                      type="button"
+                      onClick={() => onOpenVideoSettings(item)}
+                      title="Video resolution, compression & trimming settings"
+                      className="p-2 rounded-xl text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors cursor-pointer flex items-center gap-1 text-xs font-bold"
+                    >
+                      <SlidersHorizontal className="w-4 h-4 text-rose-500" />
+                      <span className="hidden sm:inline">Settings</span>
+                    </button>
+                  )}
 
                   {/* Crop button (if image) */}
                   {isImage && item.file && (
@@ -172,8 +213,17 @@ export const BatchList: React.FC<BatchListProps> = ({
 
               {/* Progress bar when converting */}
               {item.status === 'converting' && (
-                <div className="mt-3 w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
-                  <div className="bg-rose-500 h-full rounded-full animate-pulse w-full" />
+                <div className="mt-3 space-y-1">
+                  <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                    <span>Processing {isVideo ? 'video frames' : 'file'}…</span>
+                    <span>{item.progress ? `${item.progress}%` : ''}</span>
+                  </div>
+                  <div className="w-full bg-slate-100 dark:bg-slate-800 h-1.5 rounded-full overflow-hidden">
+                    <div
+                      className="bg-rose-500 h-full rounded-full transition-all duration-150"
+                      style={{ width: `${item.progress || 35}%` }}
+                    />
+                  </div>
                 </div>
               )}
 
@@ -239,3 +289,4 @@ export const BatchList: React.FC<BatchListProps> = ({
     </div>
   );
 };
+
