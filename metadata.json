@@ -1,0 +1,6 @@
+{
+  "name": "FileConvert - Local Browser File & SVG Converter",
+  "description": "Fast, 100% private client-side file and SVG converter with resolution scaling, cropping, batch export, and zero server uploads.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

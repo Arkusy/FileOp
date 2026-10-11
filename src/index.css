@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+@layer utilities {
+  .bg-checkered-light {
+    background-image: repeating-conic-gradient(#f1f5f9 0% 25%, transparent 0% 50%);
+    background-size: 16px 16px;
+  }
+  .bg-checkered-dark {
+    background-image: repeating-conic-gradient(#1e293b 0% 25%, transparent 0% 50%);
+    background-size: 16px 16px;
+  }
+}
+
+/* Custom sleek scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.4);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.6);
+}
+
