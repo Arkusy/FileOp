@@ -8,7 +8,10 @@ import {
   Copy,
   Check,
   ZoomIn,
+  ZoomOut,
   FileCheck,
+  RotateCcw,
+  Maximize2,
 } from 'lucide-react';
 import { parseSvgString, SAMPLE_SVGS, formatKb } from '../utils/svgParser';
 import { convertSvgCodeOrFile } from '../utils/fileConversion';
@@ -28,6 +31,7 @@ export const SvgStudio: React.FC<SvgStudioProps> = ({
   const [activeTab, setActiveTab] = useState<'code' | 'upload'>('code');
   const [svgCode, setSvgCode] = useState<string>(SAMPLE_SVGS[0].code);
   const [selectedScale, setSelectedScale] = useState<1 | 2 | 4>(2);
+  const [previewZoom, setPreviewZoom] = useState<number>(1);
   const [copied, setCopied] = useState(false);
   const [isConverting, setIsConverting] = useState(false);
   const [convertedOutput, setConvertedOutput] = useState<ConvertedOutput | null>(null);
@@ -37,6 +41,36 @@ export const SvgStudio: React.FC<SvgStudioProps> = ({
   const parsed = useMemo(() => {
     return parseSvgString(svgCode);
   }, [svgCode]);
+
+  // Clean, self-adjusting SVG preview string that NEVER overflows container boundaries
+  const sanitizedPreviewSvg = useMemo(() => {
+    if (!parsed.isValid || !parsed.element) return '';
+    try {
+      const clone = parsed.element.cloneNode(true) as SVGSVGElement;
+      const w = parsed.metadata?.width || 300;
+      const h = parsed.metadata?.height || 300;
+
+      // Guarantee viewBox is present
+      if (!clone.getAttribute('viewBox')) {
+        clone.setAttribute('viewBox', `0 0 ${w} ${h}`);
+      }
+
+      // Responsive container fit
+      clone.setAttribute('width', '100%');
+      clone.setAttribute('height', '100%');
+      clone.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+      clone.style.width = '100%';
+      clone.style.height = '100%';
+      clone.style.maxWidth = '100%';
+      clone.style.maxHeight = '100%';
+      clone.style.display = 'block';
+      clone.style.margin = 'auto';
+
+      return new XMLSerializer().serializeToString(clone);
+    } catch {
+      return svgCode;
+    }
+  }, [parsed, svgCode]);
 
   // Reset output on code or scale change
   useEffect(() => {
@@ -220,25 +254,71 @@ export const SvgStudio: React.FC<SvgStudioProps> = ({
             </div>
 
             {/* Live Visual Preview */}
-            <div className="md:col-span-5 flex flex-col items-center justify-center p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-checkered-light dark:bg-checkered-dark bg-slate-50/50 dark:bg-slate-950/50 min-h-[190px] relative overflow-hidden">
-              <div className="absolute top-2 left-2 text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 backdrop-blur-xs border border-slate-200/60 dark:border-slate-700/60">
-                Live Preview
+            <div className="md:col-span-5 flex flex-col items-center justify-between p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-checkered-light dark:bg-checkered-dark bg-slate-50/50 dark:bg-slate-950/50 min-h-[220px] relative overflow-hidden">
+              {/* Header Bar with Zoom Controls */}
+              <div className="w-full flex items-center justify-between mb-2 z-10">
+                <span className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider px-2 py-0.5 rounded-md bg-white/80 dark:bg-slate-900/80 backdrop-blur-xs border border-slate-200/60 dark:border-slate-700/60">
+                  Live Preview
+                </span>
+
+                {parsed.isValid && (
+                  <div className="flex items-center gap-1 bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs p-0.5 rounded-lg border border-slate-200/80 dark:border-slate-700/80 shadow-xs">
+                    <button
+                      type="button"
+                      title="Zoom Out"
+                      onClick={() => setPreviewZoom((z) => Math.max(0.5, parseFloat((z - 0.25).toFixed(2))))}
+                      className="p-1 rounded-md text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <ZoomOut className="w-3.5 h-3.5" />
+                    </button>
+                    <span className="text-[10px] font-mono font-bold text-slate-600 dark:text-slate-300 px-1 min-w-[34px] text-center">
+                      {Math.round(previewZoom * 100)}%
+                    </span>
+                    <button
+                      type="button"
+                      title="Zoom In"
+                      onClick={() => setPreviewZoom((z) => Math.min(3, parseFloat((z + 0.25).toFixed(2))))}
+                      className="p-1 rounded-md text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800"
+                    >
+                      <ZoomIn className="w-3.5 h-3.5" />
+                    </button>
+                    {previewZoom !== 1 && (
+                      <button
+                        type="button"
+                        title="Reset Zoom"
+                        onClick={() => setPreviewZoom(1)}
+                        className="p-1 rounded-md text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-950/40"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {parsed.isValid ? (
-                <div
-                  className="max-h-[160px] max-w-full flex items-center justify-center p-2 transition-transform"
-                  dangerouslySetInnerHTML={{ __html: svgCode }}
-                />
-              ) : (
-                <div className="text-center text-xs text-slate-400 p-4">
-                  SVG preview will appear here
-                </div>
-              )}
+              {/* Viewport Canvas: Auto-fits any SVG aspect ratio and never clips outside bounds */}
+              <div className="flex-1 w-full max-h-[170px] overflow-hidden flex items-center justify-center p-1 relative">
+                {parsed.isValid ? (
+                  <div
+                    className="w-full h-full max-h-full flex items-center justify-center transition-transform duration-150 ease-out origin-center select-none"
+                    style={{
+                      transform: `scale(${previewZoom})`,
+                    }}
+                    dangerouslySetInnerHTML={{ __html: sanitizedPreviewSvg }}
+                  />
+                ) : (
+                  <div className="text-center text-xs text-slate-400 p-4">
+                    SVG preview will appear here
+                  </div>
+                )}
+              </div>
 
+              {/* Dimension and format pill */}
               {parsed.metadata && (
-                <div className="absolute bottom-2 right-2 text-[10px] font-mono font-medium px-2 py-0.5 rounded-md bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 shadow-xs">
-                  {parsed.metadata.width} × {parsed.metadata.height} px
+                <div className="w-full flex items-center justify-end mt-2 z-10">
+                  <div className="text-[10px] font-mono font-medium px-2 py-0.5 rounded-md bg-white/90 dark:bg-slate-900/90 backdrop-blur-xs text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-700 shadow-xs">
+                    {parsed.metadata.width} × {parsed.metadata.height} px
+                  </div>
                 </div>
               )}
             </div>

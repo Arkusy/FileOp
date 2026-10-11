@@ -1,5 +1,6 @@
 import React from 'react';
-import { ArrowLeftRight, Moon, Sun, ShieldCheck, Github } from 'lucide-react';
+import { ArrowLeftRight, Moon, Sun, ShieldCheck } from 'lucide-react';
+import { PWAInstallButton } from './PWAInstallButton';
 
 interface HeaderProps {
   isDarkMode: boolean;
@@ -29,10 +30,11 @@ export const Header: React.FC<HeaderProps> = ({ isDarkMode, onToggleTheme }) => 
       </div>
 
       <div className="flex items-center gap-2">
-        <div className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] sm:text-xs font-medium rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 shadow-xs">
+        <PWAInstallButton />
+
+        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 text-xs font-medium rounded-full bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 shadow-xs">
           <ShieldCheck className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" />
-          <span className="hidden xs:inline">Zero Server Uploads</span>
-          <span className="xs:hidden">Private</span>
+          <span>Zero Server Uploads</span>
         </div>
 
         <button
