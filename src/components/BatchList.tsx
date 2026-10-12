@@ -154,7 +154,13 @@ export const BatchList: React.FC<BatchListProps> = ({
                     >
                       {validTargets.map((t) => (
                         <option key={t} value={t} className="dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                          {t === 'subtitles' ? 'SUBTITLES (AUTO)' : t}
+                          {t === 'auto'
+                            ? `AUTO (${item.sourceExt.toUpperCase()} - SAME)`
+                            : t === 'subtitles'
+                            ? 'SUBTITLES (AUTO)'
+                            : t === item.sourceExt
+                            ? `${t.toUpperCase()} (SAME)`
+                            : t.toUpperCase()}
                         </option>
                       ))}
                     </select>

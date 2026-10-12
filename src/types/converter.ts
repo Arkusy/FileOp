@@ -17,6 +17,7 @@ export type SupportedSourceFormat =
   | 'txt';
 
 export type SupportedTargetFormat =
+  | 'auto'
   | 'png'
   | 'jpg'
   | 'webp'
@@ -24,6 +25,7 @@ export type SupportedTargetFormat =
   | 'pdf'
   | 'docx'
   | 'txt'
+  | 'mkv'
   | 'mp4'
   | 'webm'
   | 'gif'

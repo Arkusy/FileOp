@@ -1,5 +1,7 @@
 import { ConvertedOutput, SupportedTargetFormat, VideoConversionOptions } from '../types/converter';
 import gifshot from 'gifshot';
+import { muxSubtitlesIntoMkv } from './mkvMuxer';
+import { extractSubtitlesFromMkv, MkvSubtitleTrack } from './mkvSubtitleExtractor';
 
 export interface VideoMetadata {
   duration: number;
@@ -190,13 +192,20 @@ export async function convertAndCompressVideo(
   file: File,
   targetFormat: SupportedTargetFormat,
   options: VideoConversionOptions,
-  onProgress?: (percent: number) => void
+  onProgress?: (percent: number) => void,
+  existingTracks?: MkvSubtitleTrack[]
 ): Promise<ConvertedOutput> {
-  if (targetFormat === 'gif') {
+  const srcExt = file.name.split('.').pop()?.toLowerCase() || 'mp4';
+  const effectiveFormat: SupportedTargetFormat =
+    targetFormat === 'auto'
+      ? (srcExt === 'mkv' ? 'mkv' : srcExt === 'webm' ? 'webm' : srcExt === 'gif' ? 'gif' : 'mp4')
+      : targetFormat;
+
+  if (effectiveFormat === 'gif') {
     return convertVideoToGif(file, options, onProgress);
   }
 
-  if (targetFormat === 'wav' || targetFormat === 'mp3') {
+  if (effectiveFormat === 'wav' || effectiveFormat === 'mp3') {
     return extractAudioFromVideo(file, onProgress);
   }
 
@@ -213,10 +222,19 @@ export async function convertAndCompressVideo(
   let mimeType = 'video/webm;codecs=vp9';
   let outExt = 'webm';
 
-  if (targetFormat === 'mp4' && MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) {
+  if (effectiveFormat === 'mkv') {
+    if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
+      mimeType = 'video/webm;codecs=vp9';
+    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8')) {
+      mimeType = 'video/webm;codecs=vp8';
+    } else {
+      mimeType = 'video/webm';
+    }
+    outExt = 'mkv';
+  } else if (effectiveFormat === 'mp4' && MediaRecorder.isTypeSupported('video/mp4;codecs=avc1')) {
     mimeType = 'video/mp4;codecs=avc1';
     outExt = 'mp4';
-  } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+  } else if (effectiveFormat === 'mp4' && MediaRecorder.isTypeSupported('video/mp4')) {
     mimeType = 'video/mp4';
     outExt = 'mp4';
   } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9')) {
@@ -231,16 +249,27 @@ export async function convertAndCompressVideo(
   }
 
   return new Promise((resolve, reject) => {
+    const videoUrl = URL.createObjectURL(file);
     const video = document.createElement('video');
-    video.src = URL.createObjectURL(file);
-    video.muted = options.mute;
+    video.src = videoUrl;
     video.playsInline = true;
+    video.disableRemotePlayback = true;
+
+    // Suppress Chrome's media session notification
+    if ('mediaSession' in navigator) {
+      try {
+        navigator.mediaSession.playbackState = 'none';
+      } catch {
+        // ignore
+      }
+    }
 
     const canvas = document.createElement('canvas');
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
+      URL.revokeObjectURL(videoUrl);
       reject(new Error('Canvas 2D context unavailable'));
       return;
     }
@@ -249,25 +278,92 @@ export async function convertAndCompressVideo(
     const endTime = options.trimEnd || meta.duration;
     const totalDuration = endTime - startTime;
 
-    video.onloadeddata = () => {
-      video.currentTime = startTime;
+    let audioCtx: AudioContext | null = null;
+    let audioStreamDest: MediaStreamAudioDestinationNode | null = null;
+    let audioSourceNode: MediaElementAudioSourceNode | null = null;
+
+    const cleanup = () => {
+      try {
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+      } catch {
+        // ignore
+      }
+      try {
+        if (audioStreamDest) {
+          audioStreamDest.stream.getTracks().forEach((t) => t.stop());
+        }
+      } catch {
+        // ignore
+      }
+      try {
+        if (audioCtx && audioCtx.state !== 'closed') {
+          audioCtx.close().catch(() => {});
+        }
+      } catch {
+        // ignore
+      }
+      if ('mediaSession' in navigator) {
+        try {
+          navigator.mediaSession.playbackState = 'none';
+        } catch {
+          // ignore
+        }
+      }
+      URL.revokeObjectURL(videoUrl);
     };
 
-    video.onseeked = () => {
-      // Setup recording stream
+    let started = false;
+    const startRecordingSession = () => {
+      if (started) return;
+      started = true;
+
+      // Setup recording stream from canvas
       const stream = canvas.captureStream(30);
 
-      // Add audio track if not muted
-      if (!options.mute && (video as unknown as { captureStream?: () => MediaStream }).captureStream) {
+      // Audio handling: capture audio into MediaRecorder WITHOUT playing it to speakers
+      if (!options.mute) {
         try {
-          const videoStream = (video as unknown as { captureStream: () => MediaStream }).captureStream();
-          const audioTracks = videoStream.getAudioTracks();
-          if (audioTracks.length > 0) {
-            stream.addTrack(audioTracks[0]);
+          const AudioContextClass =
+            window.AudioContext ||
+            (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+          if (AudioContextClass) {
+            audioCtx = new AudioContextClass();
+            if (audioCtx.state === 'suspended') {
+              audioCtx.resume().catch(() => {});
+            }
+            // Route video element audio into Web Audio node
+            audioSourceNode = audioCtx.createMediaElementSource(video);
+            audioStreamDest = audioCtx.createMediaStreamDestination();
+            // Connect ONLY to MediaStreamDestination, NEVER to audioCtx.destination (hardware speakers).
+            // By Web Audio standard, routing into AudioNode disconnects default speaker output,
+            // so the user hears zero background audio while the video is compressing!
+            audioSourceNode.connect(audioStreamDest);
+
+            const audioTracks = audioStreamDest.stream.getAudioTracks();
+            if (audioTracks.length > 0) {
+              stream.addTrack(audioTracks[0]);
+            }
           }
-        } catch {
-          // Continue if audio track capture isn't permitted
+        } catch (err) {
+          console.warn('Web Audio node capture fallback:', err);
         }
+
+        // Fallback to captureStream if Web Audio node was unavailable
+        if (!audioStreamDest && (video as unknown as { captureStream?: () => MediaStream }).captureStream) {
+          try {
+            const videoStream = (video as unknown as { captureStream: () => MediaStream }).captureStream();
+            const audioTracks = videoStream.getAudioTracks();
+            if (audioTracks.length > 0) {
+              stream.addTrack(audioTracks[0]);
+            }
+          } catch {
+            // Continue
+          }
+        }
+      } else {
+        video.muted = true;
       }
 
       const recorder = new MediaRecorder(stream, {
@@ -282,8 +378,29 @@ export async function convertAndCompressVideo(
         }
       };
 
-      recorder.onstop = () => {
-        const finalBlob = new Blob(chunks, { type: mimeType });
+      recorder.onstop = async () => {
+        cleanup();
+        try {
+          stream.getTracks().forEach((t) => t.stop());
+        } catch {
+          // ignore
+        }
+
+        let finalBlob = new Blob(chunks, { type: mimeType });
+
+        if (effectiveFormat === 'mkv') {
+          let tracksToMux = existingTracks;
+          if (!tracksToMux && srcExt === 'mkv') {
+            try {
+              const res = await extractSubtitlesFromMkv(file);
+              tracksToMux = res.tracks;
+            } catch {
+              tracksToMux = [];
+            }
+          }
+          finalBlob = await muxSubtitlesIntoMkv(finalBlob, tracksToMux || []);
+        }
+
         const baseName = file.name.replace(/\.[^.]+$/, '');
         const resTag = options.resolution !== 'original' ? `-${options.resolution}` : '';
         const outName = `${baseName}${resTag}.${outExt}`;
@@ -296,14 +413,32 @@ export async function convertAndCompressVideo(
       };
 
       recorder.start(100);
-      video.play().catch(reject);
+
+      // Play video to stream frames (audio is silenced via Web Audio routing)
+      video.play().catch(async () => {
+        // If unmuted playback is blocked by browser autoplay policy, mute and retry
+        video.muted = true;
+        try {
+          await video.play();
+        } catch (err) {
+          cleanup();
+          reject(err);
+        }
+      });
+
+      let isFinished = false;
+      const stopAndFinalize = () => {
+        if (isFinished) return;
+        isFinished = true;
+        if (recorder.state === 'recording') {
+          recorder.stop();
+        }
+        video.pause();
+      };
 
       const renderFrame = () => {
-        if (video.paused || video.ended || video.currentTime >= endTime) {
-          if (recorder.state === 'recording') {
-            recorder.stop();
-          }
-          video.pause();
+        if (isFinished || video.paused || video.ended || video.currentTime >= endTime) {
+          stopAndFinalize();
           return;
         }
 
@@ -315,13 +450,38 @@ export async function convertAndCompressVideo(
           onProgress(pct);
         }
 
-        requestAnimationFrame(renderFrame);
+        if ('requestVideoFrameCallback' in video) {
+          (video as unknown as { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(renderFrame);
+        } else {
+          requestAnimationFrame(renderFrame);
+        }
       };
 
-      requestAnimationFrame(renderFrame);
+      video.onended = () => {
+        stopAndFinalize();
+      };
+
+      if ('requestVideoFrameCallback' in video) {
+        (video as unknown as { requestVideoFrameCallback: (cb: () => void) => number }).requestVideoFrameCallback(renderFrame);
+      } else {
+        requestAnimationFrame(renderFrame);
+      }
+    };
+
+    video.onloadeddata = () => {
+      if (startTime > 0) {
+        video.currentTime = startTime;
+      } else {
+        startRecordingSession();
+      }
+    };
+
+    video.onseeked = () => {
+      startRecordingSession();
     };
 
     video.onerror = () => {
+      cleanup();
       reject(new Error('Playback failed during video processing.'));
     };
   });

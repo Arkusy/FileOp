@@ -67,7 +67,7 @@ export const ConversionSettings: React.FC<ConversionSettingsProps> = ({
               className="w-full px-3 py-2 text-xs rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
             />
             <span className="text-[10px] text-slate-400 mt-1 block">
-              Iterative compression for JPG & WEBP
+              Iterative compression for JPG, PNG & WEBP
             </span>
           </div>
 

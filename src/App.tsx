@@ -198,9 +198,9 @@ export default function App() {
     let activeTarget = targetFormat;
     if (TARGET_FORMATS_BY_SOURCE[normalizedFirstExt]) {
       setSourceFormat(normalizedFirstExt as SupportedSourceFormat);
-      const validTargets = TARGET_FORMATS_BY_SOURCE[normalizedFirstExt] || ['png', 'jpg'];
-      if (!validTargets.includes(targetFormat) || targetFormat === (normalizedFirstExt as any)) {
-        activeTarget = validTargets[0];
+      const validTargets = TARGET_FORMATS_BY_SOURCE[normalizedFirstExt] || ['auto', 'png', 'jpg'];
+      if (!validTargets.includes(targetFormat)) {
+        activeTarget = 'auto';
         setTargetFormat(activeTarget);
       }
     }
@@ -209,10 +209,10 @@ export default function App() {
       let ext = file.name.split('.').pop()?.toLowerCase() || 'bin';
       if (ext === 'jpeg') ext = 'jpg';
 
-      const validTargets = TARGET_FORMATS_BY_SOURCE[ext] || ['png', 'jpg', 'webp'];
-      const resolvedTarget = validTargets.includes(activeTarget) && activeTarget !== (ext as any)
+      const validTargets = TARGET_FORMATS_BY_SOURCE[ext] || ['auto', 'png', 'jpg', 'webp'];
+      const resolvedTarget = validTargets.includes(activeTarget)
         ? activeTarget
-        : validTargets[0];
+        : (validTargets[0] || 'auto');
 
       return {
         id: `${file.name}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
@@ -416,6 +416,17 @@ export default function App() {
             };
           });
         } else if (VIDEO_FORMATS.includes(item.sourceExt)) {
+          // If source is MKV and target is auto/mkv, extract subtitles first to preserve them
+          let mkvSubTracks: MkvSubtitleTrack[] = [];
+          if (item.sourceExt === 'mkv') {
+            try {
+              const subRes = await extractSubtitlesFromMkv(file);
+              mkvSubTracks = subRes.tracks;
+            } catch {
+              mkvSubTracks = [];
+            }
+          }
+
           const videoOut = await convertAndCompressVideo(
             file,
             item.targetExt,
@@ -424,8 +435,10 @@ export default function App() {
               setItems((prev) =>
                 prev.map((it) => (it.id === item.id ? { ...it, progress } : it))
               );
-            }
+            },
+            mkvSubTracks
           );
+
           outputs = [videoOut];
         } else if (item.sourceExt === 'svg') {
           const svgText = await file.text();

@@ -59,25 +59,26 @@ export const MIME_TYPES: Record<string, string> = {
   vtt: 'text/vtt',
   ass: 'text/plain',
   subtitles: 'text/plain',
+  auto: 'application/octet-stream',
 };
 
 export const TARGET_FORMATS_BY_SOURCE: Record<string, SupportedTargetFormat[]> = {
-  png: ['jpg', 'webp', 'pdf', 'svg'],
-  jpg: ['png', 'webp', 'pdf', 'svg'],
-  jpeg: ['png', 'webp', 'pdf', 'svg'],
-  webp: ['png', 'jpg', 'pdf', 'svg'],
-  svg: ['png', 'jpg', 'webp', 'pdf'],
-  gif: ['mp4', 'webm', 'png', 'jpg', 'webp'],
-  bmp: ['png', 'jpg', 'webp', 'pdf'],
-  mp4: ['webm', 'gif', 'mp4', 'mp3', 'wav', 'subtitles', 'srt', 'vtt'],
-  webm: ['mp4', 'gif', 'webm', 'mp3', 'wav', 'subtitles', 'srt', 'vtt'],
-  mov: ['mp4', 'webm', 'gif', 'mp3', 'wav'],
-  mkv: ['subtitles', 'srt', 'vtt', 'ass', 'mp4', 'webm', 'gif', 'mp3', 'wav'],
-  avi: ['mp4', 'webm', 'gif', 'mp3', 'wav'],
-  pdf: ['png', 'jpg', 'webp', 'txt'],
-  docx: ['pdf', 'txt'],
-  txt: ['pdf'],
-  any: ['subtitles', 'srt', 'vtt', 'mp4', 'webm', 'png', 'jpg', 'webp', 'pdf', 'svg', 'gif'],
+  png: ['auto', 'png', 'jpg', 'webp', 'pdf', 'svg'],
+  jpg: ['auto', 'jpg', 'png', 'webp', 'pdf', 'svg'],
+  jpeg: ['auto', 'jpg', 'png', 'webp', 'pdf', 'svg'],
+  webp: ['auto', 'webp', 'png', 'jpg', 'pdf', 'svg'],
+  svg: ['auto', 'png', 'jpg', 'webp', 'pdf'],
+  gif: ['auto', 'gif', 'mp4', 'webm', 'png', 'jpg', 'webp'],
+  bmp: ['auto', 'png', 'jpg', 'webp', 'pdf'],
+  mp4: ['auto', 'mp4', 'webm', 'mkv', 'gif', 'mp3', 'wav', 'subtitles', 'srt', 'vtt'],
+  webm: ['auto', 'webm', 'mp4', 'mkv', 'gif', 'mp3', 'wav', 'subtitles', 'srt', 'vtt'],
+  mov: ['auto', 'mp4', 'webm', 'mkv', 'gif', 'mp3', 'wav'],
+  mkv: ['auto', 'mkv', 'mp4', 'webm', 'subtitles', 'srt', 'vtt', 'ass', 'gif', 'mp3', 'wav'],
+  avi: ['auto', 'mp4', 'webm', 'mkv', 'gif', 'mp3', 'wav'],
+  pdf: ['auto', 'png', 'jpg', 'webp', 'txt'],
+  docx: ['auto', 'pdf', 'txt'],
+  txt: ['auto', 'pdf'],
+  any: ['auto', 'mkv', 'mp4', 'webm', 'png', 'jpg', 'webp', 'subtitles', 'srt', 'vtt', 'pdf', 'svg', 'gif'],
 };
 
 export function getBaseName(fileName: string): string {
@@ -140,6 +141,12 @@ export async function convertImageFile(
   crop?: CropArea | null
 ): Promise<ConvertedOutput[]> {
   const baseName = getBaseName(file.name);
+  const srcExt = file.name.split('.').pop()?.toLowerCase() || 'png';
+  const resolvedFormat: SupportedTargetFormat =
+    targetFormat === 'auto'
+      ? (srcExt === 'jpeg' ? 'jpg' : (srcExt as SupportedTargetFormat))
+      : targetFormat;
+
   const img = await loadImage(file);
 
   const naturalW = img.naturalWidth || 500;
@@ -149,16 +156,18 @@ export async function convertImageFile(
   const sx = crop ? crop.x : 0;
   const sy = crop ? crop.y : 0;
   const sw = crop ? crop.w : naturalW;
+  const sw_clamped = Math.max(1, sw);
   const sh = crop ? crop.h : naturalH;
+  const sh_clamped = Math.max(1, sh);
 
   // Scale down if maxDimension is provided
   let scale = 1;
-  if (options.maxDimension && Math.max(sw, sh) > options.maxDimension) {
-    scale = options.maxDimension / Math.max(sw, sh);
+  if (options.maxDimension && Math.max(sw_clamped, sh_clamped) > options.maxDimension) {
+    scale = options.maxDimension / Math.max(sw_clamped, sh_clamped);
   }
 
-  const finalW = Math.max(1, Math.round(sw * scale));
-  const finalH = Math.max(1, Math.round(sh * scale));
+  const finalW = Math.max(1, Math.round(sw_clamped * scale));
+  const finalH = Math.max(1, Math.round(sh_clamped * scale));
 
   // Render to canvas
   const canvas = document.createElement('canvas');
@@ -168,15 +177,15 @@ export async function convertImageFile(
   if (!ctx) throw new Error('Could not initialize canvas 2D context');
 
   // Fill white for JPG or PDF
-  if (targetFormat === 'jpg' || targetFormat === 'pdf') {
+  if (resolvedFormat === 'jpg' || resolvedFormat === 'pdf') {
     ctx.fillStyle = options.backgroundColor || '#ffffff';
     ctx.fillRect(0, 0, finalW, finalH);
   }
 
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, finalW, finalH);
+  ctx.drawImage(img, sx, sy, sw_clamped, sh_clamped, 0, 0, finalW, finalH);
 
   // Conversion outputs
-  if (targetFormat === 'pdf') {
+  if (resolvedFormat === 'pdf') {
     const isLandscape = finalW > finalH;
     const doc = new jsPDF({
       orientation: isLandscape ? 'landscape' : 'portrait',
@@ -207,7 +216,7 @@ export async function convertImageFile(
     ];
   }
 
-  if (targetFormat === 'svg') {
+  if (resolvedFormat === 'svg') {
     const dataUrl = canvas.toDataURL('image/png');
     const svgContent = `<svg xmlns="http://www.w3.org/2000/svg" width="${finalW}" height="${finalH}" viewBox="0 0 ${finalW} ${finalH}">
   <image width="${finalW}" height="${finalH}" href="${dataUrl}"/>
@@ -225,11 +234,11 @@ export async function convertImageFile(
   }
 
   // Handle PNG, JPG, WEBP
-  const mime = MIME_TYPES[targetFormat] || 'image/png';
+  const mime = MIME_TYPES[resolvedFormat] || 'image/png';
   let blob: Blob;
 
   // Check if size constraint in KB is provided
-  if (options.maxKb && (targetFormat === 'jpg' || targetFormat === 'webp')) {
+  if (options.maxKb && (resolvedFormat === 'jpg' || resolvedFormat === 'webp')) {
     const targetBytes = options.maxKb * 1024;
     let low = 0.1;
     let high = 0.95;
@@ -247,12 +256,34 @@ export async function convertImageFile(
     }
 
     blob = bestBlob || (await canvasToBlob(canvas, mime, 0.4));
+  } else if (options.maxKb && resolvedFormat === 'png') {
+    // PNG compression: iteratively scale down canvas if exceeding maxKb
+    const targetBytes = options.maxKb * 1024;
+    let b = await canvasToBlob(canvas, 'image/png');
+    let curW = finalW;
+    let curH = finalH;
+    let attempts = 0;
+    while (b.size > targetBytes && attempts < 5 && curW > 64 && curH > 64) {
+      const scaleFactor = Math.sqrt(targetBytes / b.size) * 0.95;
+      curW = Math.max(32, Math.round(curW * scaleFactor));
+      curH = Math.max(32, Math.round(curH * scaleFactor));
+      const scaledCanvas = document.createElement('canvas');
+      scaledCanvas.width = curW;
+      scaledCanvas.height = curH;
+      const sCtx = scaledCanvas.getContext('2d');
+      if (sCtx) {
+        sCtx.drawImage(canvas, 0, 0, curW, curH);
+        b = await canvasToBlob(scaledCanvas, 'image/png');
+      }
+      attempts++;
+    }
+    blob = b;
   } else {
-    const q = options.quality ?? (targetFormat === 'png' ? undefined : 0.92);
+    const q = options.quality ?? (resolvedFormat === 'png' ? undefined : 0.92);
     blob = await canvasToBlob(canvas, mime, q);
   }
 
-  const outName = `${baseName}.${targetFormat}`;
+  const outName = `${baseName}.${resolvedFormat}`;
   return [
     {
       blob,

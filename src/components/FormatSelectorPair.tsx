@@ -90,6 +90,7 @@ const FORMAT_ICONS: Record<string, React.ElementType> = {
   docx: FileText,
   txt: File,
   any: Sparkles,
+  auto: Sparkles,
 };
 
 export const FormatSelectorPair: React.FC<FormatSelectorPairProps> = ({
@@ -293,10 +294,20 @@ export const FormatSelectorPair: React.FC<FormatSelectorPairProps> = ({
                 </div>
                 <div className="min-w-0">
                   <div className="text-base sm:text-xl font-black tracking-tight text-rose-600 dark:text-rose-400 uppercase truncate">
-                    {targetFormat}
+                    {targetFormat === 'auto'
+                      ? sourceFormat !== 'any'
+                        ? `AUTO (${sourceFormat.toUpperCase()})`
+                        : 'AUTO (SAME)'
+                      : targetFormat}
                   </div>
                   <div className="text-[10px] sm:text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                    Output format
+                    {targetFormat === 'auto'
+                      ? sourceFormat === 'mkv'
+                        ? 'Compress & keep subtitles'
+                        : 'Compress in same format'
+                      : targetFormat === sourceFormat
+                      ? 'Compress (same format)'
+                      : 'Output format'}
                   </div>
                 </div>
               </div>
@@ -313,7 +324,7 @@ export const FormatSelectorPair: React.FC<FormatSelectorPairProps> = ({
 
           {/* Target Dropdown Menu */}
           {isTargetOpen && (
-            <div className="absolute right-0 top-full mt-2 z-50 w-[220px] sm:w-[260px] max-w-[calc(100vw-32px)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2.5 animate-in fade-in zoom-in-95 duration-150">
+            <div className="absolute right-0 top-full mt-2 z-50 w-[240px] sm:w-[280px] max-w-[calc(100vw-32px)] bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl p-2.5 animate-in fade-in zoom-in-95 duration-150">
               <div className="px-2 py-1 text-[11px] font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                 Output format
               </div>
@@ -321,6 +332,7 @@ export const FormatSelectorPair: React.FC<FormatSelectorPairProps> = ({
                 {validTargetFormats.map((fmt) => {
                   const Icon = FORMAT_ICONS[fmt] || File;
                   const isSelected = targetFormat === fmt;
+                  const isSame = fmt === sourceFormat;
                   return (
                     <button
                       key={fmt}
@@ -335,18 +347,32 @@ export const FormatSelectorPair: React.FC<FormatSelectorPairProps> = ({
                           : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
                       }`}
                     >
-                      <div className="flex items-center gap-2">
-                        <Icon className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-                        <span className="font-bold uppercase text-sm">
-                          {fmt === 'subtitles' ? 'AUTO SUB' : fmt}
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Icon className="w-4 h-4 text-slate-500 dark:text-slate-400 shrink-0" />
+                        <span className="font-bold uppercase text-sm truncate">
+                          {fmt === 'auto' ? 'AUTO' : fmt === 'subtitles' ? 'AUTO SUB' : fmt}
                         </span>
+                        {fmt === 'auto' && (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold lowercase truncate">
+                            {sourceFormat === 'mkv'
+                              ? '(mkv + keep sub)'
+                              : sourceFormat !== 'any'
+                              ? `(${sourceFormat} compress)`
+                              : '(same format)'}
+                          </span>
+                        )}
                         {fmt === 'subtitles' && (
-                          <span className="text-[10px] text-rose-500 font-semibold lowercase">
+                          <span className="text-[10px] text-rose-500 font-semibold lowercase truncate">
                             (embedded)
                           </span>
                         )}
+                        {isSame && (
+                          <span className="text-[10px] text-emerald-600 dark:text-emerald-400 font-semibold lowercase truncate">
+                            (same format)
+                          </span>
+                        )}
                       </div>
-                      {isSelected && <Check className="w-4 h-4 text-rose-500" />}
+                      {isSelected && <Check className="w-4 h-4 text-rose-500 shrink-0 ml-1" />}
                     </button>
                   );
                 })}
