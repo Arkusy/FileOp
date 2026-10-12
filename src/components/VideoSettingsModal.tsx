@@ -1,11 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { VideoConversionOptions } from '../types/converter';
-import { Video, X, Check, VolumeX, Volume2, Scissors, Gauge, Play, Pause } from 'lucide-react';
-import { getVideoMetadata } from '../utils/videoProcessor';
+import { VideoConversionOptions, VideoCodecChoice, SupportedTargetFormat } from '../types/converter';
+import { Video, X, Check, VolumeX, Volume2, Scissors, Gauge, Play, Pause, Cpu } from 'lucide-react';
+import {
+  getVideoMetadata,
+  resolveOutputContainer,
+  getCodecAvailability,
+  isCodecAllowedInContainer,
+} from '../utils/videoProcessor';
 
 interface VideoSettingsModalProps {
   isOpen: boolean;
   file: File;
+  targetFormat?: SupportedTargetFormat;
   currentOptions?: VideoConversionOptions;
   onApply: (options: VideoConversionOptions) => void;
   onClose: () => void;
@@ -14,6 +20,7 @@ interface VideoSettingsModalProps {
 export const VideoSettingsModal: React.FC<VideoSettingsModalProps> = ({
   isOpen,
   file,
+  targetFormat,
   currentOptions,
   onApply,
   onClose,
@@ -29,9 +36,19 @@ export const VideoSettingsModal: React.FC<VideoSettingsModalProps> = ({
   const [quality, setQuality] = useState<VideoConversionOptions['quality']>(
     currentOptions?.quality || 'medium'
   );
+  const [codec, setCodec] = useState<VideoCodecChoice>(currentOptions?.codec || 'auto');
+  const [codecSupport, setCodecSupport] = useState<Record<VideoCodecChoice, boolean>>({
+    auto: true,
+    h264: true,
+    h265: false,
+    av1: false,
+    vp9: true,
+  });
   const [mute, setMute] = useState<boolean>(currentOptions?.mute || false);
   const [trimStart, setTrimStart] = useState<number>(currentOptions?.trimStart || 0);
   const [trimEnd, setTrimEnd] = useState<number>(currentOptions?.trimEnd || 10);
+
+  const containerKind = resolveOutputContainer(file?.name || '', targetFormat || 'auto');
 
   useEffect(() => {
     if (!isOpen || !file) return;
@@ -44,11 +61,16 @@ export const VideoSettingsModal: React.FC<VideoSettingsModalProps> = ({
         if (!currentOptions?.trimEnd || currentOptions.trimEnd > meta.duration) {
           setTrimEnd(meta.duration);
         }
+        if (containerKind === 'mp4' || containerKind === 'webm' || containerKind === 'mkv') {
+          getCodecAvailability(containerKind, meta.width, meta.height)
+            .then(setCodecSupport)
+            .catch(() => {});
+        }
       })
       .catch(() => {});
 
     return () => URL.revokeObjectURL(url);
-  }, [isOpen, file, currentOptions]);
+  }, [isOpen, file, currentOptions, containerKind]);
 
   const togglePlay = () => {
     if (!videoRef.current) return;
@@ -193,6 +215,54 @@ export const VideoSettingsModal: React.FC<VideoSettingsModalProps> = ({
             </div>
           </div>
 
+          {/* Video Codec Selection */}
+          {(containerKind === 'mp4' || containerKind === 'webm' || containerKind === 'mkv') && (
+            <div>
+              <label className="text-xs font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1.5 mb-1.5">
+                <Cpu className="w-3.5 h-3.5 text-rose-500" />
+                <span>Video Codec</span>
+              </label>
+              <div className="grid grid-cols-5 gap-1.5">
+                {[
+                  { id: 'auto' as const, label: 'Auto' },
+                  { id: 'h264' as const, label: 'H.264' },
+                  { id: 'h265' as const, label: 'H.265' },
+                  { id: 'vp9' as const, label: 'VP9' },
+                  { id: 'av1' as const, label: 'AV1' },
+                ].map((item) => {
+                  const allowed = isCodecAllowedInContainer(item.id, containerKind);
+                  const supported = codecSupport[item.id];
+                  const disabled = !allowed || !supported;
+
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => setCodec(item.id)}
+                      title={
+                        !allowed
+                          ? `Not supported in ${containerKind.toUpperCase()}`
+                          : !supported
+                          ? 'Not supported by your browser'
+                          : undefined
+                      }
+                      className={`p-2 rounded-xl text-xs font-bold transition-all text-center cursor-pointer ${
+                        disabled
+                          ? 'opacity-40 cursor-not-allowed bg-slate-100 dark:bg-slate-800/40 text-slate-400'
+                          : codec === item.id
+                          ? 'bg-rose-500 text-white shadow-xs'
+                          : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+                      }`}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
           {/* Video Trimming Sliders */}
           <div>
             <div className="flex items-center justify-between text-xs font-bold text-slate-700 dark:text-slate-300 mb-1">
@@ -274,6 +344,7 @@ export const VideoSettingsModal: React.FC<VideoSettingsModalProps> = ({
               onApply({
                 resolution,
                 quality,
+                codec,
                 mute,
                 trimStart,
                 trimEnd,

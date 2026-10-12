@@ -50,10 +50,14 @@ export interface ConvertedOutput {
   size: number;
 }
 
+export type VideoCodecChoice = 'auto' | 'h264' | 'h265' | 'av1' | 'vp9';
+
 export interface VideoConversionOptions {
   resolution: 'original' | '1080p' | '720p' | '480p' | '360p';
   quality: 'high' | 'medium' | 'low';
   mute: boolean;
+  /** Video codec. 'auto' picks the best one for the output container. */
+  codec?: VideoCodecChoice;
   trimStart?: number;
   trimEnd?: number;
   gifFps?: number;

@@ -643,6 +643,7 @@ export default function App() {
           isOpen={!!videoSettingsTargetItem}
           file={videoSettingsTargetItem.file}
           currentOptions={videoSettingsTargetItem.videoOptions}
+          targetFormat={videoSettingsTargetItem.targetExt}
           onApply={handleApplyVideoSettings}
           onClose={() => setVideoSettingsTargetItem(null)}
         />

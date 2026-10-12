@@ -1,7 +1,28 @@
-import { ConvertedOutput, SupportedTargetFormat, VideoConversionOptions } from '../types/converter';
+import {
+  ConvertedOutput,
+  SupportedTargetFormat,
+  VideoCodecChoice,
+  VideoConversionOptions,
+} from '../types/converter';
 import gifshot from 'gifshot';
+import {
+  ALL_FORMATS,
+  BlobSource,
+  BufferTarget,
+  Conversion,
+  Input,
+  MkvOutputFormat,
+  Mp4OutputFormat,
+  Output,
+  WebMOutputFormat,
+  canEncodeVideo,
+} from 'mediabunny';
 import { muxSubtitlesIntoMkv } from './mkvMuxer';
 import { extractSubtitlesFromMkv, MkvSubtitleTrack } from './mkvSubtitleExtractor';
+
+/* -------------------------------------------------------------------------- */
+/*  Types & shared helpers                                                    */
+/* -------------------------------------------------------------------------- */
 
 export interface VideoMetadata {
   duration: number;
@@ -10,8 +31,157 @@ export interface VideoMetadata {
   aspectRatio: number;
 }
 
+export type OutputContainer = 'mp4' | 'webm' | 'mkv';
+type ConcreteCodec = Exclude<VideoCodecChoice, 'auto'>;
+type MbVideoCodec = 'avc' | 'hevc' | 'vp9' | 'av1' | 'vp8';
+
+const CHOICE_TO_MB: Record<ConcreteCodec, MbVideoCodec> = {
+  h264: 'avc',
+  h265: 'hevc',
+  vp9: 'vp9',
+  av1: 'av1',
+};
+
+const MB_TO_LABEL: Record<MbVideoCodec, string> = {
+  avc: 'H.264',
+  hevc: 'H.265 (HEVC)',
+  vp9: 'VP9',
+  av1: 'AV1',
+  vp8: 'VP8',
+};
+
+/** Which codecs each container may hold. */
+const CONTAINER_CODECS: Record<OutputContainer, MbVideoCodec[]> = {
+  mp4: ['avc', 'hevc', 'vp9', 'av1'],
+  webm: ['vp9', 'av1', 'vp8'],
+  mkv: ['avc', 'hevc', 'vp9', 'av1', 'vp8'],
+};
+
+/** Order tried when the codec is "auto". */
+const AUTO_ORDER: Record<OutputContainer, MbVideoCodec[]> = {
+  mp4: ['avc', 'vp9', 'av1'],
+  webm: ['vp9', 'vp8', 'av1'],
+  mkv: ['avc', 'vp9', 'av1'],
+};
+
+/**
+ * Newer codecs reach the same visual quality at a lower bitrate, so the
+ * target bitrate is scaled down. This is where the file-size saving comes from.
+ */
+const BITRATE_FACTOR: Record<MbVideoCodec, number> = {
+  avc: 1,
+  vp8: 1.3,
+  vp9: 0.7,
+  hevc: 0.6,
+  av1: 0.5,
+};
+
+const BASE_VIDEO_BITRATE = { high: 4_000_000, medium: 1_500_000, low: 700_000 } as const;
+const AUDIO_BITRATE = { high: 128_000, medium: 96_000, low: 64_000 } as const;
+
+export function webCodecsAvailable(): boolean {
+  return typeof VideoEncoder !== 'undefined' && typeof VideoDecoder !== 'undefined';
+}
+
+/** Target video bitrate (bits/s) for a quality level and codec. */
+export function getTargetBitrate(
+  quality: VideoConversionOptions['quality'],
+  codec: VideoCodecChoice | MbVideoCodec = 'h264'
+): number {
+  const mb: MbVideoCodec =
+    codec === 'auto'
+      ? 'avc'
+      : codec in CHOICE_TO_MB
+        ? CHOICE_TO_MB[codec as ConcreteCodec]
+        : (codec as MbVideoCodec);
+  return Math.round(BASE_VIDEO_BITRATE[quality] * BITRATE_FACTOR[mb]);
+}
+
+/** Works out the real output type for a file + chosen target format. */
+export function resolveOutputContainer(
+  fileName: string,
+  target: SupportedTargetFormat
+): OutputContainer | 'gif' | 'audio' {
+  const srcExt = fileName.split('.').pop()?.toLowerCase() || 'mp4';
+  const effective: SupportedTargetFormat =
+    target === 'auto'
+      ? srcExt === 'mkv'
+        ? 'mkv'
+        : srcExt === 'webm'
+          ? 'webm'
+          : srcExt === 'gif'
+            ? 'gif'
+            : 'mp4'
+      : target;
+  if (effective === 'gif') return 'gif';
+  if (effective === 'wav' || effective === 'mp3') return 'audio';
+  if (effective === 'mkv') return 'mkv';
+  if (effective === 'webm') return 'webm';
+  return 'mp4';
+}
+
+export function isCodecAllowedInContainer(
+  choice: VideoCodecChoice,
+  container: OutputContainer
+): boolean {
+  if (choice === 'auto') return true;
+  return CONTAINER_CODECS[container].includes(CHOICE_TO_MB[choice]);
+}
+
+/**
+ * Which codec choices this browser/device can actually encode for the given
+ * container and output size. Used by the settings modal to disable options.
+ */
+export async function getCodecAvailability(
+  container: OutputContainer,
+  width: number,
+  height: number
+): Promise<Record<VideoCodecChoice, boolean>> {
+  const result: Record<VideoCodecChoice, boolean> = {
+    auto: true,
+    h264: false,
+    h265: false,
+    av1: false,
+    vp9: false,
+  };
+  if (!webCodecsAvailable()) return result;
+
+  const w = Math.max(2, Math.round(width / 2) * 2);
+  const h = Math.max(2, Math.round(height / 2) * 2);
+  await Promise.all(
+    (Object.keys(CHOICE_TO_MB) as ConcreteCodec[]).map(async (choice) => {
+      const mb = CHOICE_TO_MB[choice];
+      if (!CONTAINER_CODECS[container].includes(mb)) return;
+      try {
+        result[choice] = await canEncodeVideo(mb, {
+          width: w,
+          height: h,
+          bitrate: getTargetBitrate('medium', mb),
+        });
+      } catch {
+        result[choice] = false;
+      }
+    })
+  );
+  return result;
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Metadata                                                                  */
+/* -------------------------------------------------------------------------- */
+
+async function getMetadataViaMediabunny(file: File): Promise<VideoMetadata> {
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  const track = await input.getPrimaryVideoTrack();
+  if (!track) throw new Error('No video track found in this file.');
+  const duration = await input.computeDuration();
+  const w = track.displayWidth || 1280;
+  const h = track.displayHeight || 720;
+  return { duration: duration || 0, width: w, height: h, aspectRatio: w / h };
+}
+
 export function getVideoMetadata(file: File): Promise<VideoMetadata> {
-  return new Promise((resolve, reject) => {
+  const viaElement = new Promise<VideoMetadata>((resolve, reject) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
     const url = URL.createObjectURL(file);
@@ -34,33 +204,40 @@ export function getVideoMetadata(file: File): Promise<VideoMetadata> {
       reject(new Error('Failed to load video metadata. The format may be unsupported by your browser.'));
     };
   });
+
+  // Browsers can't play every container/codec (e.g. some MKV files) even when
+  // WebCodecs can still read them, so retry with Mediabunny before giving up.
+  return viaElement.catch(async (err) => {
+    try {
+      return await getMetadataViaMediabunny(file);
+    } catch {
+      throw err;
+    }
+  });
 }
 
-function calculateTargetDimensions(
+/**
+ * "720p" means the SHORT side is 720 px (so portrait videos scale correctly).
+ * Never upscales. Output dimensions are always even (required by most codecs).
+ */
+export function calculateTargetDimensions(
   origW: number,
   origH: number,
   resolution: VideoConversionOptions['resolution']
-): { width: number; height: number } {
-  if (resolution === 'original') {
-    return { width: origW, height: origH };
+): { width: number; height: number; scaled: boolean } {
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+
+  const targets: Record<string, number> = { '1080p': 1080, '720p': 720, '480p': 480, '360p': 360 };
+  const target = targets[resolution];
+  const shortSide = Math.min(origW, origH);
+
+  if (resolution === 'original' || !target || shortSide <= target) {
+    const oddDims = origW % 2 !== 0 || origH % 2 !== 0;
+    return { width: even(origW), height: even(origH), scaled: oddDims };
   }
 
-  let maxW = 1280;
-  if (resolution === '1080p') maxW = 1920;
-  if (resolution === '720p') maxW = 1280;
-  if (resolution === '480p') maxW = 854;
-  if (resolution === '360p') maxW = 640;
-
-  if (origW <= maxW) {
-    return { width: origW, height: origH };
-  }
-
-  const ratio = origH / origW;
-  const newW = maxW;
-  // Ensure dimensions are even numbers for video codecs
-  const newH = Math.round((newW * ratio) / 2) * 2;
-
-  return { width: newW, height: newH };
+  const scale = target / shortSide;
+  return { width: even(origW * scale), height: even(origH * scale), scaled: true };
 }
 
 // Convert video to animated GIF
@@ -187,28 +364,262 @@ export async function extractAudioFromVideo(
   };
 }
 
-// Convert video with resolution scaling and bitrate compression
+/* -------------------------------------------------------------------------- */
+/*  Fast path: WebCodecs via Mediabunny (faster than real time, no playback)  */
+/* -------------------------------------------------------------------------- */
+
+/** Thrown when the fast path can't handle a file, so the caller may fall back. */
+class FastPathUnavailableError extends Error {}
+
+function shiftSubtitleTracks(
+  tracks: MkvSubtitleTrack[],
+  startMs: number,
+  endMs: number
+): MkvSubtitleTrack[] {
+  if (startMs <= 0 && !isFinite(endMs)) return tracks;
+  return tracks.map((t) => ({
+    ...t,
+    cues: t.cues
+      .filter((c) => c.endMs > startMs && c.startMs < endMs)
+      .map((c) => ({
+        ...c,
+        startMs: Math.max(0, c.startMs - startMs),
+        endMs: Math.min(c.endMs, endMs) - startMs,
+      })),
+  }));
+}
+
+async function pickVideoCodec(
+  container: OutputContainer,
+  choice: VideoCodecChoice,
+  width: number,
+  height: number,
+  quality: VideoConversionOptions['quality']
+): Promise<MbVideoCodec> {
+  if (choice !== 'auto') {
+    const mb = CHOICE_TO_MB[choice];
+    if (!CONTAINER_CODECS[container].includes(mb)) {
+      throw new Error(
+        `${MB_TO_LABEL[mb]} can't be stored in ${container.toUpperCase()}. Choose MP4 or MKV as the output format, or pick another codec.`
+      );
+    }
+    const ok = await canEncodeVideo(mb, { width, height, bitrate: getTargetBitrate(quality, mb) }).catch(
+      () => false
+    );
+    if (!ok) {
+      throw new Error(
+        `${MB_TO_LABEL[mb]} encoding isn't supported by this browser or device at ${width}x${height}. Choose another codec.`
+      );
+    }
+    return mb;
+  }
+
+  for (const mb of AUTO_ORDER[container]) {
+    const ok = await canEncodeVideo(mb, { width, height, bitrate: getTargetBitrate(quality, mb) }).catch(
+      () => false
+    );
+    if (ok) return mb;
+  }
+  throw new FastPathUnavailableError('No supported video encoder found.');
+}
+
+async function convertWithWebCodecs(
+  file: File,
+  container: OutputContainer,
+  srcExt: string,
+  options: VideoConversionOptions,
+  onProgress?: (percent: number) => void,
+  existingTracks?: MkvSubtitleTrack[],
+  signal?: AbortSignal
+): Promise<ConvertedOutput> {
+  if (signal?.aborted) throw new DOMException('Conversion cancelled', 'AbortError');
+
+  // 1. Open the input and read basic info (no <video> element involved)
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  let srcW: number;
+  let srcH: number;
+  let sourceDuration: number;
+  try {
+    const track = await input.getPrimaryVideoTrack();
+    if (!track) throw new Error('no video track');
+    srcW = track.displayWidth;
+    srcH = track.displayHeight;
+    sourceDuration = await input.computeDuration();
+  } catch (err) {
+    throw new FastPathUnavailableError(
+      `Could not read input with WebCodecs: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  const dims = calculateTargetDimensions(srcW, srcH, options.resolution);
+  const choice: VideoCodecChoice = options.codec ?? 'auto';
+
+  // 2. Codec + bitrate
+  const codec = await pickVideoCodec(container, choice, dims.width, dims.height, options.quality);
+  const videoBitrate = getTargetBitrate(options.quality, codec);
+
+  // 3. Trim
+  const trimStart = Math.max(0, options.trimStart || 0);
+  const trimEnd = options.trimEnd && options.trimEnd > 0 ? options.trimEnd : sourceDuration;
+  const needsTrim = trimStart > 0.05 || trimEnd < sourceDuration - 0.1;
+
+  // 4. Output container
+  const target = new BufferTarget();
+  const format =
+    container === 'mp4'
+      ? new Mp4OutputFormat({ fastStart: 'in-memory' })
+      : container === 'webm'
+        ? new WebMOutputFormat()
+        : new MkvOutputFormat();
+  const output = new Output({ format, target });
+
+  // 5. Build the conversion
+  let conversion: Conversion;
+  try {
+    conversion = await Conversion.init({
+      input,
+      output,
+      video: {
+        codec,
+        bitrate: videoBitrate,
+        forceTranscode: true, // we WANT to re-encode so the bitrate target is applied
+        ...(dims.scaled ? { width: dims.width, height: dims.height, fit: 'fill' as const } : {}),
+      },
+      audio: options.mute ? { discard: true } : { bitrate: AUDIO_BITRATE[options.quality] },
+      ...(needsTrim ? { trim: { start: trimStart, end: trimEnd } } : {}),
+    });
+  } catch (err) {
+    throw new FastPathUnavailableError(
+      `Conversion setup failed: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+
+  if (!conversion.isValid) {
+    throw new FastPathUnavailableError('This video cannot be decoded or encoded with WebCodecs.');
+  }
+
+  // Warn (don't fail) if the audio could not be carried over
+  if (!options.mute) {
+    const droppedAudio = conversion.discardedTracks.filter(
+      (d) => (d.track as unknown as { type?: string }).type === 'audio'
+    );
+    if (droppedAudio.length > 0) {
+      console.warn(
+        'Audio track(s) could not be converted and were dropped:',
+        droppedAudio.map((d) => d.reason)
+      );
+    }
+  }
+
+  conversion.onProgress = (p: number) => {
+    onProgress?.(Math.min(99, Math.max(1, Math.round(p * 100))));
+  };
+  const onAbort = () => {
+    conversion.cancel().catch(() => {});
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+
+  try {
+    await conversion.execute();
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
+
+  const buffer = target.buffer;
+  if (!buffer) throw new Error('Encoding finished but produced no output.');
+
+  const mime = container === 'mp4' ? 'video/mp4' : container === 'webm' ? 'video/webm' : 'video/x-matroska';
+  let finalBlob = new Blob([buffer], { type: mime });
+
+  // 6. MKV: embed subtitles (unless Mediabunny already carried them across)
+  if (container === 'mkv') {
+    const carriedNatively = conversion.utilizedTracks.some(
+      (t) => (t as unknown as { type?: string }).type === 'subtitle'
+    );
+    if (!carriedNatively) {
+      let tracksToMux = existingTracks;
+      if (!tracksToMux && srcExt === 'mkv') {
+        try {
+          tracksToMux = (await extractSubtitlesFromMkv(file)).tracks;
+        } catch {
+          tracksToMux = [];
+        }
+      }
+      if (tracksToMux && tracksToMux.length > 0) {
+        const aligned = shiftSubtitleTracks(
+          tracksToMux,
+          needsTrim ? trimStart * 1000 : 0,
+          needsTrim ? trimEnd * 1000 : Infinity
+        );
+        finalBlob = await muxSubtitlesIntoMkv(finalBlob, aligned);
+      }
+    }
+  }
+
+  onProgress?.(100);
+
+  const baseName = file.name.replace(/\.[^.]+$/, '');
+  const resTag = options.resolution !== 'original' ? `-${options.resolution}` : '';
+  const codecTag = choice !== 'auto' ? `-${choice}` : '';
+  const outName = `${baseName}${resTag}${codecTag}.${container}`;
+
+  return {
+    blob: finalBlob,
+    name: outName,
+    url: URL.createObjectURL(finalBlob),
+    size: finalBlob.size,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Public entry point                                                        */
+/* -------------------------------------------------------------------------- */
+
+// Convert video with resolution scaling, codec choice and bitrate compression
 export async function convertAndCompressVideo(
   file: File,
   targetFormat: SupportedTargetFormat,
   options: VideoConversionOptions,
   onProgress?: (percent: number) => void,
-  existingTracks?: MkvSubtitleTrack[]
+  existingTracks?: MkvSubtitleTrack[],
+  signal?: AbortSignal
 ): Promise<ConvertedOutput> {
   const srcExt = file.name.split('.').pop()?.toLowerCase() || 'mp4';
-  const effectiveFormat: SupportedTargetFormat =
-    targetFormat === 'auto'
-      ? (srcExt === 'mkv' ? 'mkv' : srcExt === 'webm' ? 'webm' : srcExt === 'gif' ? 'gif' : 'mp4')
-      : targetFormat;
+  const kind = resolveOutputContainer(file.name, targetFormat);
 
-  if (effectiveFormat === 'gif') {
+  if (kind === 'gif') {
     return convertVideoToGif(file, options, onProgress);
   }
-
-  if (effectiveFormat === 'wav' || effectiveFormat === 'mp3') {
+  if (kind === 'audio') {
     return extractAudioFromVideo(file, onProgress);
   }
 
+  if (webCodecsAvailable()) {
+    try {
+      return await convertWithWebCodecs(file, kind, srcExt, options, onProgress, existingTracks, signal);
+    } catch (err) {
+      if (!(err instanceof FastPathUnavailableError)) throw err;
+      console.warn('Fast WebCodecs path unavailable, falling back to real-time playback:', err.message);
+    }
+  }
+
+  // Fallback: old real-time playback + MediaRecorder method (slow, but works almost anywhere).
+  // Note: this path can only produce H.264/VP9-style output and ignores the codec choice.
+  return convertViaPlayback(file, kind, srcExt, options, onProgress, existingTracks);
+}
+
+/* -------------------------------------------------------------------------- */
+/*  Legacy fallback: real-time playback + MediaRecorder                       */
+/* -------------------------------------------------------------------------- */
+
+async function convertViaPlayback(
+  file: File,
+  effectiveFormat: OutputContainer,
+  srcExt: string,
+  options: VideoConversionOptions,
+  onProgress?: (percent: number) => void,
+  existingTracks?: MkvSubtitleTrack[]
+): Promise<ConvertedOutput> {
   const meta = await getVideoMetadata(file);
   const { width, height } = calculateTargetDimensions(meta.width, meta.height, options.resolution);
 

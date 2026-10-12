@@ -325,8 +325,12 @@ export async function muxSubtitlesIntoMkv(
 
         // Store original cluster bytes for now
         segmentChildren.push(bytes.subarray(elPos, dataPos + dataSize));
+      } else if (elId === 0x114d9b74 || elId === 0x1c53bb6b) {
+        // SeekHead / Cues hold absolute byte offsets that become invalid once the
+        // Tracks element grows and subtitle blocks are injected. Both are optional,
+        // so drop them; players rebuild the index on load.
       } else {
-        // Other segment elements (Info, SeekHead, Tags, etc.)
+        // Other segment elements (Info, Tags, etc.)
         segmentChildren.push(bytes.subarray(elPos, dataPos + dataSize));
       }
 
@@ -339,7 +343,6 @@ export async function muxSubtitlesIntoMkv(
       let clusterIdx = 0;
       for (let i = 0; i < segmentChildren.length; i++) {
         const itemBytes = segmentChildren[i];
-        const el = readElementId(0);
         const itemEl = ((itemBytes[0] << 24) | (itemBytes[1] << 16) | (itemBytes[2] << 8) | itemBytes[3]) >>> 0;
         if (itemEl === 0x1f43b675) {
           const currentCluster = clusterPositions[clusterIdx];
